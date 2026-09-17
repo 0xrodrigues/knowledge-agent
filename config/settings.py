@@ -36,6 +36,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 # Investigação de código
 CALL_CHAIN_DEPTH_DEFAULT = int(os.getenv("CALL_CHAIN_DEPTH_DEFAULT", "2"))
 MAX_FILES_PER_EXTRACTION = int(os.getenv("MAX_FILES_PER_EXTRACTION", "40"))
+LLM_MAX_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "5"))
 
 # Local paths
 DATA_DIR = PROJECT_ROOT / "data"
