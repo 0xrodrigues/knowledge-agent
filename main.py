@@ -3,50 +3,92 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
-from dataclasses import asdict
+import time
 from pathlib import Path
 
-from agent.orchestrator import ContextRequest, Orchestrator, OrchestratorError
-from config.settings import CALL_CHAIN_DEPTH_DEFAULT
+from agent.orchestrator import ContextAnswer, ContextRequest, Orchestrator, OrchestratorError
+from config.settings import CALL_CHAIN_DEPTH_DEFAULT, REPORTS_DIR
 from graph.knowledge_graph import KnowledgeGraph
 
+_SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
 
-def _print_context_answer(answer) -> None:
-    print("=== Contexto de Regras de Negocio ===")
-    print(f"Componente   : {answer.component}")
-    print(f"Origem       : {answer.origin_description}")
-    print(f"Cobertura    : {answer.coverage}")
-    print(f"Motivo       : {answer.coverage_reason}")
-    print()
+
+def _slugify(component: str) -> str:
+    slug = _SLUG_PATTERN.sub("-", component.lower()).strip("-")
+    return slug or "root"
+
+
+def _report_filename(component: str, *, generated_at: str) -> str:
+    return f"{_slugify(component)}-{generated_at}.md"
+
+
+def _render_rule_markdown(rule) -> str:
+    lines = [
+        f"### [{rule.rule_id or '???'}] {rule.description}",
+        "",
+        f"- **Categoria:** {rule.category}",
+        f"- **Confiança:** {rule.confidence}",
+        f"- **Status:** {rule.status}",
+        f"- **Origem:** {rule.origin}",
+    ]
+    if rule.condition:
+        lines.append(f"- **Condição:** {rule.condition}")
+    for src in rule.source_files:
+        loc = f"{src.file}:{src.lines}" if src.lines else src.file
+        lines.append(f"- **Arquivo:** `{loc}`")
+    if rule.evidence:
+        lines.append("- **Evidência:**")
+        lines.append("  ```")
+        for evidence_line in rule.evidence.splitlines() or [rule.evidence]:
+            lines.append(f"  {evidence_line}")
+        lines.append("  ```")
+    return "\n".join(lines)
+
+
+def _render_refs_table_markdown(refs) -> str:
+    lines = ["| Tipo | Nome | Arquivo |", "|---|---|---|"]
+    for ref in refs:
+        loc = ref.source_files[0].file if ref.source_files else ""
+        lines.append(f"| {ref.type} | {ref.name} | `{loc}` |")
+    return "\n".join(lines)
+
+
+def _render_markdown(answer: ContextAnswer, *, generated_at: str) -> str:
+    parts = [
+        f"# Contexto de Regras de Negócio — {answer.component}",
+        "",
+        f"*Gerado em {generated_at}*",
+        "",
+        f"- **Origem:** {answer.origin_description}",
+        f"- **Cobertura:** {answer.coverage}",
+        f"- **Motivo:** {answer.coverage_reason}",
+        "",
+        "## Resumo",
+        "",
+        answer.summary or "(sem resumo)",
+        "",
+        f"## Regras ({len(answer.rules)})",
+        "",
+    ]
 
     if not answer.rules:
-        print("Regras: (nenhuma encontrada)")
+        parts.append("_Nenhuma regra encontrada._")
     else:
-        print("Regras:")
         for rule in answer.rules:
-            print(
-                f"  [{rule.rule_id or '???'}] {rule.category}  "
-                f"confidence={rule.confidence}  status={rule.status}  origin={rule.origin}"
-            )
-            print(f"    {rule.description}")
-            if rule.condition:
-                print(f"    condicao : {rule.condition}")
-            for src in rule.source_files:
-                loc = f"{src.file}:{src.lines}" if src.lines else src.file
-                print(f"    arquivo  : {loc}")
-            if rule.evidence:
-                print(f"    evidencia: {rule.evidence}")
-            print()
+            parts.append(_render_rule_markdown(rule))
+            parts.append("")
 
-    if answer.technical_refs:
-        print("Referencias tecnicas:")
-        for ref in answer.technical_refs:
-            loc = ref.source_files[0].file if ref.source_files else ""
-            print(f"  [{ref.type}] {ref.name}  -> {loc}")
-        print()
+    parts.append(f"## Referências Técnicas ({len(answer.technical_refs)})")
+    parts.append("")
+    if not answer.technical_refs:
+        parts.append("_Nenhuma referência técnica encontrada._")
+    else:
+        parts.append(_render_refs_table_markdown(answer.technical_refs))
 
-    print(f"Resumo: {answer.summary}")
+    parts.append("")
+    return "\n".join(parts)
 
 
 def cmd_context(args: argparse.Namespace) -> int:
@@ -95,7 +137,11 @@ def cmd_context(args: argparse.Namespace) -> int:
             )
         )
     else:
-        _print_context_answer(answer)
+        generated_at = time.strftime("%Y%m%d-%H%M%S")
+        markdown = _render_markdown(answer, generated_at=generated_at)
+        report_path = REPORTS_DIR / _report_filename(answer.component, generated_at=generated_at)
+        report_path.write_text(markdown, encoding="utf-8")
+        print(f"Documento salvo em: {report_path}")
     return 0
 
 

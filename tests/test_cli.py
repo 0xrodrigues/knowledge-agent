@@ -30,6 +30,14 @@ def isolated_graph(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolated_reports_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    monkeypatch.setattr("main.REPORTS_DIR", reports_dir)
+    return reports_dir
+
+
+@pytest.fixture(autouse=True)
 def fake_extractor(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_docs(component, hits):
         return CodeContext(component=component, rules=[], technical_refs=[], summary="")
@@ -82,8 +90,8 @@ def test_context_branch_json_output(
     assert payload["coverage"] == "partial"
 
 
-def test_context_human_readable_output(
-    capsys: pytest.CaptureFixture, tmp_java_repo: Path
+def test_context_default_writes_markdown_report(
+    capsys: pytest.CaptureFixture, tmp_java_repo: Path, isolated_reports_dir: Path
 ) -> None:
     rc = main.main(
         [
@@ -98,8 +106,14 @@ def test_context_human_readable_output(
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Cobertura" in out
-    assert "RN-001" in out
+    assert "Documento salvo em:" in out
+
+    report_files = list(isolated_reports_dir.glob("*.md"))
+    assert len(report_files) == 1
+    content = report_files[0].read_text(encoding="utf-8")
+    assert "Cobertura" in content
+    assert "RN-001" in content
+    assert "Regra sem tag" not in content  # sanity: real rule content, not a stub
 
 
 def test_context_missing_origin_args_errors(capsys: pytest.CaptureFixture) -> None:

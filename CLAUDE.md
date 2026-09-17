@@ -6,7 +6,7 @@ Agente de contexto de código para engenheiros. Antes de mexer numa funcionalida
 
 **Princípio central:** a maior fonte de verdade sobre regras de negócio é o que está implementado no código — não o que documentação de produto/negócio "acha" que é. Documentação já commitada no repo (README, `/docs`, ADRs, Javadoc) é ponto de partida barato, mas nunca é aceita como verdade sem confronto com o código real quando o código está em escopo da consulta.
 
-O agente responde direto no terminal do engenheiro. Não publica em nenhum sistema externo. O SQLite local é cache de conhecimento entre execuções, não um sistema de publicação.
+O agente gera um documento Markdown local (`reports/<componente>-<timestamp>.md`) com a investigação completa — não publica em nenhum sistema externo. `--json` continua disponível pra consumo por outra ferramenta. O SQLite local é cache de conhecimento entre execuções, não um sistema de publicação.
 
 ---
 
