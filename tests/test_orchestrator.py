@@ -221,6 +221,59 @@ def test_inferred_rule_gets_resolved_rn_auto_id_in_answer(
     assert persisted is not None
 
 
+def test_auto_id_rule_reused_from_cache_on_second_run(
+    monkeypatch: pytest.MonkeyPatch, orchestrator: Orchestrator, tmp_java_repo: Path
+) -> None:
+    """Regression: a real run crashed on the SECOND identical run of an
+    inferred (no explicit tag) rule. _persist allocates 'RN-AUTO-<n>' and
+    stores it fine (plain SQLite write, no validation) — but the next run's
+    _reused_confirmed_rules reconstructs an ExtractedRule from that stored
+    id, and ExtractedRule's rule_id validator only accepted 'RN-\\d+',
+    rejecting its own 'RN-AUTO-<n>' format with a pydantic ValidationError."""
+    calls = {"code": 0}
+
+    def fake_extract_from_docs(component, hits):
+        return _empty_context(component)
+
+    def fake_extract_from_code(*, component, files, mode, known_rules, doc_candidates):
+        calls["code"] += 1
+        return CodeContext(
+            component=component,
+            rules=[
+                ExtractedRule(
+                    rule_id=None,
+                    description="Regra sem tag explicita no codigo",
+                    condition="",
+                    category="business",
+                    confidence="high",
+                    origin="inferred",
+                    status="code_confirmed",
+                    source_files=[SourceLocation(file=SERVICE_PATH, lines="1-5")],
+                    evidence="...",
+                )
+            ],
+            technical_refs=[],
+            summary="",
+        )
+
+    monkeypatch.setattr("agent.orchestrator.extract_from_docs", fake_extract_from_docs)
+    monkeypatch.setattr("agent.orchestrator.extract_from_code", fake_extract_from_code)
+
+    request = ContextRequest(
+        mode="branch",
+        branch="feature/raise-daily-limit",
+        base_branch="main",
+        repo_path=tmp_java_repo,
+    )
+    first_answer = orchestrator.answer(request)
+    assert first_answer.rules[0].rule_id.startswith("RN-AUTO-")
+    assert calls["code"] == 1
+
+    second_answer = orchestrator.answer(request)  # used to raise ValidationError here
+    assert calls["code"] == 1  # reused from cache, no second LLM call
+    assert second_answer.rules[0].rule_id == first_answer.rules[0].rule_id
+
+
 def test_code_contradicts_doc_wins_over_doc_candidate(
     monkeypatch: pytest.MonkeyPatch, orchestrator: Orchestrator, tmp_java_repo: Path
 ) -> None:

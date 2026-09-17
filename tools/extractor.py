@@ -26,6 +26,10 @@ RuleOrigin = Literal["repo_doc", "explicit_tag", "inferred"]
 RuleStatus = Literal["doc_only", "code_confirmed", "code_contradicts_doc", "code_only"]
 
 RULE_ID_PATTERN = re.compile(r"^RN-\d{1,4}$")
+# Ids alocados pelo próprio orchestrator (agent/orchestrator.py) quando o LLM
+# não achou tag explícita no código/doc — precisam ser aceitos aqui também,
+# já que regras reaproveitadas do cache voltam a passar por este validador.
+AUTO_RULE_ID_PATTERN = re.compile(r"^RN-AUTO-\d{1,6}$")
 
 
 class SourceLocation(BaseModel):
@@ -50,8 +54,10 @@ class ExtractedRule(BaseModel):
         if value is None or not value.strip():
             return None
         value = value.strip().upper()
-        if not RULE_ID_PATTERN.match(value):
-            raise ValueError(f"rule_id must look like RN-XX (got: {value!r})")
+        if not (RULE_ID_PATTERN.match(value) or AUTO_RULE_ID_PATTERN.match(value)):
+            raise ValueError(
+                f"rule_id must look like RN-XX or RN-AUTO-XX (got: {value!r})"
+            )
         return value
 
 
