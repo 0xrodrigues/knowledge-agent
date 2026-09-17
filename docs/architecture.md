@@ -63,6 +63,7 @@ knowledge-agent/
 - Lê variáveis do `.env` (dotenv é opcional em tempo de import).
 - Define caminhos absolutos: `DB_PATH`, `SCHEMA_PATH`, `LOG_PATH`, `REPO_CACHE_DIR` (destino dos clones automáticos).
 - Expõe `CALL_CHAIN_DEPTH_DEFAULT` e `MAX_FILES_PER_EXTRACTION`, usados como default/cap na expansão de código.
+- Expõe `LLM_MAX_CONCURRENCY` (default `5`) — quantos lotes da Camada 2 rodam em paralelo.
 - Expõe `require_openrouter()` — só valida quando o cliente real é instanciado, permitindo que `status`/`list` rodem sem credenciais.
 
 ### 4.2 `tools/vcs.py` — git local
@@ -112,7 +113,7 @@ knowledge-agent/
 2. **Deriva componente** — usa `request.area` se fornecido, senão o prefixo de path comum entre os arquivos em escopo.
 3. **Camada 0** — `docs_scanner.find_repo_docs` + `extract_from_docs`, só quando há `repo_root` local.
 4. **Camada 1** — lê cada arquivo em escopo uma vez, calcula hash, compara contra `rule_sources.content_hash` de regras `status="code_confirmed"` já conhecidas. Arquivo com hash batendo não entra na Camada 2.
-5. **Camada 2** — para os arquivos que faltam: se `full_flow=True`, `code_scanner.expand_call_chain` primeiro; depois `extract_from_code` em lotes (`chunk_for_llm`), passando as regras conhecidas e os candidatos de doc como contexto.
+5. **Camada 2** — para os arquivos que faltam: se `full_flow=True`, `code_scanner.expand_call_chain` primeiro; depois `extract_from_code` em lotes (`chunk_for_llm`), passando as regras conhecidas e os candidatos de doc como contexto. Os lotes rodam em paralelo via `ThreadPoolExecutor` (até `LLM_MAX_CONCURRENCY` chamadas simultâneas — são chamadas LLM independentes, I/O-bound, sem motivo pra serializar). Se qualquer lote falhar, os demais já em voo ainda terminam (não desperdiça chamada já em curso) antes de propagar `OrchestratorError`.
 6. **Merge** — regras extraídas na Camada 2 sempre vencem sobre cache/doc para a mesma chave (`rule_id` ou descrição normalizada); regras de doc cujo arquivo nunca foi verificado nesta consulta permanecem `doc_only`; regras reaproveitadas do cache mantêm seu `status` armazenado.
 7. **Coverage** — `"full"` quando `full_flow=True` sem truncamento (por profundidade ou limite de arquivos) ou quando o componente já tinha scan completo neste mesmo commit; `"partial"` no resto. `coverage_reason` é sempre uma string determinística, nunca gerada por LLM.
 8. **Escreve** — `graph.transaction()` única: `upsert_component` (marcando `last_full_scan_commit` quando aplicável), `upsert_rule` + `upsert_rule_source` por regra (resolvendo `rule_id` faltante contra regras existentes por descrição normalizada, ou alocando `RN-AUTO-<n>`), `upsert_technical_ref`, `log_operation`.
@@ -201,6 +202,7 @@ Variáveis opcionais com defaults em `config/settings.py`:
 - `OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`)
 - `CALL_CHAIN_DEPTH_DEFAULT` (default `2`)
 - `MAX_FILES_PER_EXTRACTION` (default `40`)
+- `LLM_MAX_CONCURRENCY` (default `5`)
 
 ---
 
@@ -223,5 +225,5 @@ Nenhuma camada captura `Exception` genérica para "engolir" erros — o orchestr
 - **Symbol extraction é heurística (regex), não parsing real** — cobre o padrão idiomático Spring Boot, mas pode perder símbolos em código muito fora do convencional. Evolução futura: `tree-sitter`/`javaparser`.
 - **`expand_call_chain` só busca por nome de método via grep textual** — pode gerar falsos positivos em nomes de método muito genéricos, e não segue interfaces/polimorfismo.
 - **Sem versionamento histórico de regra** — o grafo guarda a última extração conhecida; não há `rules_history`.
-- **Sem paralelismo** — LLM calls e leitura de arquivos são síncronas.
+- **Paralelismo só na Camada 2** — lotes de `extract_from_code` rodam concorrentes (`LLM_MAX_CONCURRENCY`); leitura de arquivos (git/API) e Camada 0/1 continuam síncronas — não costumam ser o gargalo, mas não foram paralelizadas.
 - **Sem retry policy** em chamadas LLM/GitHub — falha transitória aborta a consulta.

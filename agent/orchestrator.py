@@ -13,12 +13,14 @@ import hashlib
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal, Optional
 
 from config.settings import (
     CALL_CHAIN_DEPTH_DEFAULT,
+    LLM_MAX_CONCURRENCY,
     LOG_PATH,
     MAX_FILES_PER_EXTRACTION,
     REPO_CACHE_DIR,
@@ -431,38 +433,61 @@ class Orchestrator:
                 detail=f"files={len(files_to_process)}; batches={len(batches)}",
                 component=component,
             )
-        for i, batch in enumerate(batches, start=1):
+        def _run_batch(i: int, batch: dict[str, str]):
             logger.info(
-                "Camada 2: lote %d/%d (%d arquivo(s): %s)",
+                "Camada 2: lote %d/%d iniciado (%d arquivo(s): %s)",
                 i, len(batches), len(batch), ", ".join(batch.keys()),
             )
             batch_start = time.monotonic()
-            try:
-                batch_context = extract_from_code(
-                    component=component,
-                    files=batch,
-                    mode=mode_label,
-                    known_rules=known_rules,
-                    doc_candidates=doc_rules,
-                )
-            except ExtractionError as exc:
-                self._log_step(
-                    request=request,
-                    step="llm_extract",
-                    status="error",
-                    detail=f"batch={i}/{len(batches)}; {type(exc).__name__}: {exc}",
-                    component=component,
-                )
-                raise OrchestratorError(f"Camada 2 (code) extraction failed: {exc}") from exc
+            batch_context = extract_from_code(
+                component=component,
+                files=batch,
+                mode=mode_label,
+                known_rules=known_rules,
+                doc_candidates=doc_rules,
+            )
             logger.info(
                 "Camada 2: lote %d/%d concluido em %.1fs (%d regra(s), %d ref(s))",
                 i, len(batches), time.monotonic() - batch_start,
                 len(batch_context.rules), len(batch_context.technical_refs),
             )
-            code_rules.extend(batch_context.rules)
-            code_technical_refs.extend(batch_context.technical_refs)
-            if not summary and batch_context.summary:
-                summary = batch_context.summary
+            return i, batch_context
+
+        # Batches são chamadas LLM independentes (I/O-bound) — rodar em
+        # paralelo com um pool limitado corta o tempo total drasticamente
+        # sem estourar rate limit do OpenRouter. Todas em voo terminam antes
+        # de propagar erro, pra não desperdiçar chamadas já pagas/em curso.
+        first_error: Optional[tuple[int, Exception]] = None
+        if batches:
+            worker_count = min(LLM_MAX_CONCURRENCY, len(batches))
+            with ThreadPoolExecutor(max_workers=worker_count) as pool:
+                futures = {
+                    pool.submit(_run_batch, i, batch): i
+                    for i, batch in enumerate(batches, start=1)
+                }
+                for future in as_completed(futures):
+                    i = futures[future]
+                    try:
+                        _, batch_context = future.result()
+                    except ExtractionError as exc:
+                        if first_error is None:
+                            first_error = (i, exc)
+                        continue
+                    code_rules.extend(batch_context.rules)
+                    code_technical_refs.extend(batch_context.technical_refs)
+                    if not summary and batch_context.summary:
+                        summary = batch_context.summary
+
+        if first_error is not None:
+            i, exc = first_error
+            self._log_step(
+                request=request,
+                step="llm_extract",
+                status="error",
+                detail=f"batch={i}/{len(batches)}; {type(exc).__name__}: {exc}",
+                component=component,
+            )
+            raise OrchestratorError(f"Camada 2 (code) extraction failed: {exc}") from exc
 
         if batches:
             self._log_step(

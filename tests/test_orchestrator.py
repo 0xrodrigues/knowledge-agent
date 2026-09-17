@@ -306,6 +306,80 @@ def test_area_mode_full_flow_marks_full_scan(
     assert component_record.last_full_scan_commit is not None
 
 
+def test_parallel_batches_aggregate_all_results(
+    monkeypatch: pytest.MonkeyPatch, orchestrator: Orchestrator, tmp_java_repo: Path
+) -> None:
+    """3 seed files, tiny max_chars forces 3 separate batches — run in
+    parallel via ThreadPoolExecutor. Every batch's rules must still show up
+    in the final answer, regardless of completion order."""
+    monkeypatch.setattr("agent.orchestrator._MAX_CHARS_PER_BATCH", 1)
+
+    calls: list[str] = []
+
+    def fake_extract_from_docs(component, hits):
+        return _empty_context(component)
+
+    def fake_extract_from_code(*, component, files, mode, known_rules, doc_candidates):
+        (path,) = files.keys()
+        calls.append(path)
+        # Deterministic per-path numeric id (rule_id must match RN-\d{1,4}),
+        # no shared counter — avoids a race between concurrent threads both
+        # reading the same counter value.
+        digits = abs(hash(path)) % 9000 + 100
+        rule = _code_confirmed_rule(description=f"Regra de {path}").model_copy(
+            update={"rule_id": f"RN-{digits}"}
+        )
+        return CodeContext(
+            component=component,
+            rules=[rule],
+            technical_refs=[],
+            summary="",
+        )
+
+    monkeypatch.setattr("agent.orchestrator.extract_from_docs", fake_extract_from_docs)
+    monkeypatch.setattr("agent.orchestrator.extract_from_code", fake_extract_from_code)
+
+    request = ContextRequest(
+        mode="area",
+        area="src/main/java/com/cielo/payments",
+        repo_path=tmp_java_repo,
+        full_flow=True,
+    )
+    answer = orchestrator.answer(request)
+
+    assert len(calls) == 3  # one batch per file — confirms it didn't collapse into one
+    assert len(answer.rules) == 3
+
+
+def test_parallel_batch_error_fails_whole_request(
+    monkeypatch: pytest.MonkeyPatch, orchestrator: Orchestrator, tmp_java_repo: Path
+) -> None:
+    """One batch failing must still fail the whole request under the
+    parallel executor, same as the old sequential loop did."""
+    monkeypatch.setattr("agent.orchestrator._MAX_CHARS_PER_BATCH", 1)
+
+    def fake_extract_from_docs(component, hits):
+        return _empty_context(component)
+
+    def fake_extract_from_code(*, component, files, mode, known_rules, doc_candidates):
+        (path,) = files.keys()
+        if path.endswith("Payment.java"):
+            raise ExtractionError("simulated failure for this batch")
+        return CodeContext(component=component, rules=[], technical_refs=[], summary="")
+
+    monkeypatch.setattr("agent.orchestrator.extract_from_docs", fake_extract_from_docs)
+    monkeypatch.setattr("agent.orchestrator.extract_from_code", fake_extract_from_code)
+
+    request = ContextRequest(
+        mode="area",
+        area="src/main/java/com/cielo/payments",
+        repo_path=tmp_java_repo,
+        full_flow=True,
+    )
+    with pytest.raises(OrchestratorError, match="simulated failure"):
+        orchestrator.answer(request)
+
+
 # --------------------------------------------------------------------- errors
 
 
