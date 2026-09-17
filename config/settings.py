@@ -45,10 +45,12 @@ DB_PATH = DATA_DIR / "graph.db"
 SCHEMA_PATH = PROJECT_ROOT / "graph" / "schema.sql"
 LOG_PATH = LOG_DIR / "operations.log"
 REPO_CACHE_DIR = DATA_DIR / "repo_cache"
+REPORTS_DIR = PROJECT_ROOT / "reports"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 REPO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def require_openrouter() -> None:

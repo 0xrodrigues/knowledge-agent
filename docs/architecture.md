@@ -6,10 +6,11 @@ O Knowledge Agent é uma CLI Python que responde, para um engenheiro prestes a m
 
 ```
 origem (PR/branch/area) → Camada 0 (doc do repo) → Camada 1 (cache SQLite)
-    → Camada 2 (código real, LLM) → merge + coverage → grafo (write+log) → resposta no terminal
+    → Camada 2 (código real, LLM) → merge + coverage → grafo (write+log)
+    → documento Markdown em reports/
 ```
 
-O agente não publica em nenhum sistema externo. O SQLite local é cache de conhecimento entre execuções, consultado antes de qualquer leitura de código.
+O agente não publica em nenhum sistema externo. O SQLite local é cache de conhecimento entre execuções, consultado antes de qualquer leitura de código. O resultado de cada consulta vira um documento Markdown em `reports/<componente>-<timestamp>.md` — `--json` continua disponível pra consumo por outra ferramenta (stdout, não gera arquivo).
 
 ---
 
@@ -47,6 +48,7 @@ knowledge-agent/
 │   └── orchestrator.py       # Coordena as 3 camadas; único escritor do grafo
 ├── data/graph.db              # SQLite local (auto-gerado)
 ├── data/repo_cache/           # Clones automáticos (quando só --repo é passado, sem --repo-path)
+├── reports/                   # Documento Markdown por consulta (<componente>-<timestamp>.md)
 ├── logs/operations.log        # Auditoria estruturada
 ├── docs/architecture.md       # Este documento
 ├── tests/                     # pytest — fixture de repo git real (tmp_java_repo)
@@ -133,6 +135,8 @@ CLI baseado em `argparse`:
 | `context --area <path> [--repo owner/name \| --repo-path .] [--depth N] [--json]` | Contexto de uma área/pacote inteiro (sempre full-flow). `--repo` sem `--repo-path` clona/atualiza automaticamente. |
 | `status` | Imprime `KnowledgeGraph.stats()` em JSON. |
 | `list` | Lista componentes documentados e contagem de regras/refs. |
+
+Por padrão, `context` escreve um documento Markdown em `reports/<componente>-<timestamp>.md` (função pura `_render_markdown` + `write_text`) e imprime só o caminho do arquivo no terminal — não despeja a lista de regras na tela. `--json` é o caminho alternativo pra consumo por outra ferramenta: serializa `ContextAnswer` direto no stdout, sem gerar arquivo.
 
 ---
 

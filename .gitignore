@@ -7,6 +7,7 @@ venv/
 data/*.db
 data/*.db-journal
 data/repo_cache/
+reports/*.md
 logs/*.log
 .DS_Store
 .idea/
