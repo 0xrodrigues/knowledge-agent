@@ -15,6 +15,34 @@ def _fail_if_called(*args, **kwargs):
     raise AssertionError("chat() should not have been called")
 
 
+# ------------------------------------------------------------------ rule_id
+
+
+@pytest.mark.parametrize("value", ["RN-001", "RN-1", "RN-AUTO-1", "RN-AUTO-42"])
+def test_extracted_rule_accepts_valid_rule_ids(value: str) -> None:
+    rule = extractor.ExtractedRule(
+        rule_id=value,
+        description="x",
+        category="business",
+        confidence="high",
+        origin="inferred",
+        status="code_only",
+    )
+    assert rule.rule_id == value
+
+
+def test_extracted_rule_rejects_garbage_rule_id() -> None:
+    with pytest.raises(Exception, match="must look like"):
+        extractor.ExtractedRule(
+            rule_id="not-a-rule-id",
+            description="x",
+            category="business",
+            confidence="high",
+            origin="inferred",
+            status="code_only",
+        )
+
+
 # ------------------------------------------------------------ extract_from_docs
 
 
