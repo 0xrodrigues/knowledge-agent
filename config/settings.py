@@ -30,17 +30,12 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4-5")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
-# Confluence
-CONFLUENCE_URL = os.getenv("CONFLUENCE_URL", "")
-CONFLUENCE_USERNAME = os.getenv("CONFLUENCE_USERNAME", "")
-CONFLUENCE_API_TOKEN = os.getenv("CONFLUENCE_API_TOKEN", "")
-CONFLUENCE_SPACE_KEY = os.getenv("CONFLUENCE_SPACE_KEY", "")
+# GitHub (fallback REST — opcional se `gh` CLI estiver disponível e autenticado)
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
-# Confluence parent page titles
-PARENT_BUSINESS_TITLE = os.getenv(
-    "PARENT_BUSINESS_TITLE", "Produtos & Regras de Negócio"
-)
-PARENT_TECHNICAL_TITLE = os.getenv("PARENT_TECHNICAL_TITLE", "Técnico")
+# Investigação de código
+CALL_CHAIN_DEPTH_DEFAULT = int(os.getenv("CALL_CHAIN_DEPTH_DEFAULT", "2"))
+MAX_FILES_PER_EXTRACTION = int(os.getenv("MAX_FILES_PER_EXTRACTION", "40"))
 
 # Local paths
 DATA_DIR = PROJECT_ROOT / "data"
@@ -48,20 +43,12 @@ LOG_DIR = PROJECT_ROOT / "logs"
 DB_PATH = DATA_DIR / "graph.db"
 SCHEMA_PATH = PROJECT_ROOT / "graph" / "schema.sql"
 LOG_PATH = LOG_DIR / "operations.log"
+REPO_CACHE_DIR = DATA_DIR / "repo_cache"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+REPO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def require_openrouter() -> None:
     _required("OPENROUTER_API_KEY")
-
-
-def require_confluence() -> None:
-    for name in (
-        "CONFLUENCE_URL",
-        "CONFLUENCE_USERNAME",
-        "CONFLUENCE_API_TOKEN",
-        "CONFLUENCE_SPACE_KEY",
-    ):
-        _required(name)

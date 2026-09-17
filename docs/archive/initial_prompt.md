@@ -1,4 +1,12 @@
-# Knowledge Agent — Prompt de Desenvolvimento
+> **Arquivado.** Este documento descreve a especificação original do projeto
+> (pipeline documento de negócio PDF/Word → Confluence). O escopo mudou: o
+> agente hoje extrai regras de negócio a partir de código-fonte (PR/branch/
+> área), não de documentos, e responde direto ao engenheiro em vez de
+> publicar no Confluence. Ver [`../architecture.md`](../architecture.md) e
+> o `CLAUDE.md` da raiz do projeto para a arquitetura atual. Mantido aqui só
+> como registro histórico.
+
+# Knowledge Agent — Prompt de Desenvolvimento (histórico, pré-pivot)
 
 ## Contexto
 

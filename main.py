@@ -4,41 +4,99 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
-from agent.orchestrator import IngestResult, Orchestrator
+from agent.orchestrator import ContextRequest, Orchestrator, OrchestratorError
+from config.settings import CALL_CHAIN_DEPTH_DEFAULT
 from graph.knowledge_graph import KnowledgeGraph
 
 
-def _print_ingest_result(r: IngestResult) -> None:
-    print(f"  document : {r.document_path}")
-    print(f"  product  : {r.product}")
-    print(f"  type     : {r.primary_type}")
-    print(f"  op       : {r.operation}")
-    print(f"  rules    : {', '.join(r.rules_seen) or '(none)'}")
-    for page in r.pages_touched:
-        print(f"  page     : [{page.page_id}] {page.title} -> {page.url}")
+def _print_context_answer(answer) -> None:
+    print("=== Contexto de Regras de Negocio ===")
+    print(f"Componente   : {answer.component}")
+    print(f"Origem       : {answer.origin_description}")
+    print(f"Cobertura    : {answer.coverage}")
+    print(f"Motivo       : {answer.coverage_reason}")
+    print()
+
+    if not answer.rules:
+        print("Regras: (nenhuma encontrada)")
+    else:
+        print("Regras:")
+        for rule in answer.rules:
+            print(
+                f"  [{rule.rule_id or '???'}] {rule.category}  "
+                f"confidence={rule.confidence}  status={rule.status}  origin={rule.origin}"
+            )
+            print(f"    {rule.description}")
+            if rule.condition:
+                print(f"    condicao : {rule.condition}")
+            for src in rule.source_files:
+                loc = f"{src.file}:{src.lines}" if src.lines else src.file
+                print(f"    arquivo  : {loc}")
+            if rule.evidence:
+                print(f"    evidencia: {rule.evidence}")
+            print()
+
+    if answer.technical_refs:
+        print("Referencias tecnicas:")
+        for ref in answer.technical_refs:
+            loc = ref.source_files[0].file if ref.source_files else ""
+            print(f"  [{ref.type}] {ref.name}  -> {loc}")
+        print()
+
+    print(f"Resumo: {answer.summary}")
 
 
-def cmd_ingest(args: argparse.Namespace) -> int:
-    orch = Orchestrator()
-    if args.file:
-        result = orch.ingest_file(args.file)
-        print("Ingested:")
-        _print_ingest_result(result)
-        return 0
-    if args.folder:
-        results = orch.ingest_folder(args.folder)
-        if not results:
-            print("No documents ingested. Nothing to do.")
-            return 0
-        for r in results:
-            print("Ingested:")
-            _print_ingest_result(r)
-            print("-" * 40)
-        return 0
-    print("Provide either --file or --folder.", file=sys.stderr)
-    return 2
+def cmd_context(args: argparse.Namespace) -> int:
+    if args.pr is not None:
+        mode = "pr_number"
+    elif args.branch is not None:
+        mode = "branch"
+    else:
+        mode = "area"
+
+    full_flow = args.full_flow or (mode == "area")
+
+    request = ContextRequest(
+        mode=mode,
+        pr_number=args.pr,
+        branch=args.branch,
+        base_branch=args.base,
+        area=args.area,
+        repo_path=args.repo_path,
+        repo=args.repo,
+        full_flow=full_flow,
+        call_chain_depth=args.depth,
+    )
+
+    try:
+        orch = Orchestrator()
+        answer = orch.answer(request)
+    except OrchestratorError as exc:
+        print(f"Erro: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "component": answer.component,
+                    "origin_description": answer.origin_description,
+                    "coverage": answer.coverage,
+                    "coverage_reason": answer.coverage_reason,
+                    "rules": [r.model_dump() for r in answer.rules],
+                    "technical_refs": [t.model_dump() for t in answer.technical_refs],
+                    "summary": answer.summary,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        _print_context_answer(answer)
+    return 0
 
 
 def cmd_status(_: argparse.Namespace) -> int:
@@ -50,34 +108,58 @@ def cmd_status(_: argparse.Namespace) -> int:
 
 def cmd_list(_: argparse.Namespace) -> int:
     graph = KnowledgeGraph()
-    products = graph.list_products()
-    if not products:
-        print("(no products documented yet)")
+    components = graph.list_components()
+    if not components:
+        print("(nenhum componente documentado ainda)")
         return 0
-    for product in products:
-        pages = graph.list_pages_for_product(product)
-        labels = ", ".join(f"{p.type}({p.confluence_page_id})" for p in pages)
-        print(f"- {product}: {labels}")
+    for component in components:
+        rules = graph.rules_for_component(component.name)
+        refs = graph.technical_refs_for_component(component.name)
+        print(f"- {component.name}: {len(rules)} regra(s), {len(refs)} referencia(s) tecnica(s)")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="knowledge-agent",
-        description="Institutional knowledge agent: ingest docs, publish to Confluence.",
+        description="Agente de contexto de codigo: extrai regras de negocio implementadas.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    ing = sub.add_parser("ingest", help="Ingest a document or folder of documents.")
-    group = ing.add_mutually_exclusive_group(required=True)
-    group.add_argument("--file", type=Path, help="Path to a single PDF/DOCX file.")
-    group.add_argument("--folder", type=Path, help="Folder containing documents.")
-    ing.set_defaults(func=cmd_ingest)
+    ctx = sub.add_parser(
+        "context", help="Extrai contexto de regras de negocio de um PR, branch ou area."
+    )
+    origin_group = ctx.add_mutually_exclusive_group(required=True)
+    origin_group.add_argument("--pr", type=int, help="Numero do PR no GitHub.")
+    origin_group.add_argument("--branch", type=str, help="Branch local a comparar com --base.")
+    origin_group.add_argument("--area", type=str, help="Caminho/pacote a analisar por completo.")
+    ctx.add_argument("--base", type=str, default="main", help="Branch base para --branch (default: main).")
+    ctx.add_argument(
+        "--repo",
+        type=str,
+        help="Repositorio: 'owner/name' ou URL do GitHub. Sem --repo-path, o agente clona "
+        "automaticamente em cache local (data/repo_cache/).",
+    )
+    ctx.add_argument(
+        "--repo-path",
+        type=Path,
+        help="Caminho de um clone local ja existente (opcional — evita o clone automatico).",
+    )
+    ctx.add_argument(
+        "--full-flow",
+        action="store_true",
+        help="Expande a analise pela cadeia de chamadas, alem do diff.",
+    )
+    ctx.add_argument(
+        "--depth", type=int, default=CALL_CHAIN_DEPTH_DEFAULT, help="Profundidade da expansao de call-chain."
+    )
+    ctx.add_argument("--json", action="store_true", help="Imprime a resposta em JSON.")
+    ctx.set_defaults(func=cmd_context)
 
-    st = sub.add_parser("status", help="Show graph statistics.")
+    st = sub.add_parser("status", help="Mostra estatisticas do grafo.")
     st.set_defaults(func=cmd_status)
 
-    ls = sub.add_parser("list", help="List documented products.")
+    ls = sub.add_parser("list", help="Lista componentes documentados.")
     ls.set_defaults(func=cmd_list)
 
     return parser
